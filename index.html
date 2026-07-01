@@ -98,7 +98,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const SIZE_RE = /^[A-Z]{1,3}\d{2,3}$/;
+const SIZE_RE = /^(XXS|XS|S|M|L|XL|XXL|XXXL)$|^[A-Z]{1,3}\d{2,3}$/;
 let PARSED = [];   // danh sach PO da parse
 
 // ---- template constants (trich tu file INV mau) ----
@@ -155,25 +155,37 @@ function parseSheet(ws){
     else if(lv.startsWith('season')) meta.season=nx;
   }}
   if(!meta.order) meta.order=ws.name.trim();
-  // rows
-  const rows=[]; const tot={ctn:0,qty:0,vol:0,nw:0,gw:0}; let lastRef=null,lastColor=null;
+  // rows: phan biet dong CHI TIET (co size) va dong SUBTOTAL (size trong nhung box&realqty co so)
+  const rows=[];
+  const gtot={ctn:0,qty:0,vol:0,nw:0,gw:0}; let nsub=0;          // tong tu dong subtotal
+  const dtot={ctn:0,qty:0,vol:0,nw:0,gw:0};                       // tong tu dong chi tiet (fallback)
+  let lastRef=null,lastColor=null;
   const last=ws.rowCount;
   for(let r=hdr+1;r<=last;r++){
     const rv=cellVal(ws.getCell(r,C.ref)); if(rv!==null&&rv!=='') lastRef=rv;
     const cv=cellVal(ws.getCell(r,C.color)); if(cv!==null&&cv!=='') lastColor=cv;
     let size=cellVal(ws.getCell(r,C.size));
-    const real=num(cellVal(ws.getCell(r,C.real)));
-    if(!(typeof size==='string' && SIZE_RE.test(size.trim().toUpperCase()))) continue;
+    const boxRaw=cellVal(ws.getCell(r,C.box)), realRaw=cellVal(ws.getCell(r,C.real));
+    const box=num(boxRaw), real=num(realRaw), vol=num(cellVal(ws.getCell(r,C.vol)));
+    const nw=num(cellVal(ws.getCell(r,C.nw))), gw=num(cellVal(ws.getCell(r,C.gw)));
+    const isSize = (typeof size==='string' && SIZE_RE.test(size.trim().toUpperCase()));
+    if(!isSize){
+      // dong subtotal: khong co size nhung co so thung & so luong -> tong chinh xac (theo file)
+      if((size===null||size===undefined||size==='') && typeof boxRaw==='number' && typeof realRaw==='number' && real>0){
+        gtot.ctn+=box; gtot.qty+=real; gtot.vol+=vol; gtot.nw+=nw; gtot.gw+=gw; nsub++;
+      }
+      continue;
+    }
     if(real<=0) continue;
     const [art,desc]=articleOf(lastRef);
-    const box=num(cellVal(ws.getCell(r,C.box))), vol=num(cellVal(ws.getCell(r,C.vol)));
-    const nw=num(cellVal(ws.getCell(r,C.nw))), gw=num(cellVal(ws.getCell(r,C.gw)));
     rows.push({cfrom:cellVal(ws.getCell(r,C.from)),cto:cellVal(ws.getCell(r,C.to)),ref:lastRef,art,desc,
       color:lastColor,size:size.trim().toUpperCase(),qty_ctn:num(cellVal(ws.getCell(r,C.qty))),
       boxes:box,real,vol,nw,gw,csize:cellVal(ws.getCell(r,C.csize))});
-    tot.ctn+=box; tot.qty+=real; tot.vol+=vol; tot.nw+=nw; tot.gw+=gw;
+    dtot.ctn+=box; dtot.qty+=real; dtot.vol+=vol; dtot.nw+=nw; dtot.gw+=gw;
   }
-  if(!rows.length) return null;
+  if(!rows.length && nsub===0) return null;
+  // Uu tien tong tu dong subtotal (khop cach tinh cua file goc); neu khong co thi dung tong chi tiet
+  const tot = (nsub>0) ? gtot : dtot;
   const arts={};
   for(const x of rows){ const k=x.art+'||'+x.desc; arts[k]=(arts[k]||0)+x.real; }
   meta.rows=rows; meta.tot=tot; meta.articles=arts; meta.sheet=ws.name;
