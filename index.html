@@ -173,7 +173,8 @@ function parseOneBlock(ws,hdr,endR,blockNo){
     if(real<=0) continue;
     const [art,desc]=articleOf(lastRef);
     rows.push({cfrom:cellVal(ws.getCell(r,C.from)),cto:cellVal(ws.getCell(r,C.to)),ref:lastRef,art,desc,
-      color:lastColor,size:size.trim().toUpperCase(),boxes:box,real,vol,nw,gw,csize:cellVal(ws.getCell(r,C.csize))});
+      color:lastColor,size:size.trim().toUpperCase(),qtyctn:num(cellVal(ws.getCell(r,C.qty))),
+      boxes:box,real,vol,nw,gw,csize:cellVal(ws.getCell(r,C.csize))});
     dtot.ctn+=box; dtot.qty+=real; dtot.vol+=vol; dtot.nw+=nw; dtot.gw+=gw;
   }
   if(!rows.length && nsub===0) return null;
@@ -187,6 +188,8 @@ function parseOneBlock(ws,hdr,endR,blockNo){
   meta.article=art0; meta.desc=desc0 || (meta.customer?String(meta.customer).toUpperCase():'');
   meta.colour=rows.length?rows[0].color:'';
   meta.dcNumber=[meta.dc,meta.warehouse,meta.dest].filter(x=>x!=null&&x!=='').join('/');
+  meta.dc4=(String(meta.dc==null?'':meta.dc).match(/\d{3,4}/)||[])[0] || (String(meta.dcNumber).match(/\d{3,4}/)||[''])[0];
+  meta.refText=rows.length?String(rows[0].ref==null?'':rows[0].ref):(meta.desc||'');
   meta.cartons=Math.round(tot.ctn);
   meta.cartonRange = meta.cartons>0 ? ('1-'+meta.cartons) : '';
   // articles gop cho invoice
@@ -198,6 +201,21 @@ function groupByPo(list){
   const map={};
   list.forEach(m=>{ (map[m.po]=map[m.po]||[]).push(m); });
   return Object.keys(map).map(po=>({po, markets:map[po]}));
+}
+// Lay danh sach so PO co trong sheet "Delivery List"
+function deliveryPOs(wb){
+  let set=null;
+  wb.eachSheet(ws=>{
+    if(set||!/delivery/i.test(ws.name)) return;
+    let oc=null,hr=null;
+    for(let r=1;r<=12&&!oc;r++){ for(let c=1;c<=40;c++){ const v=cellVal(ws.getCell(r,c));
+      if(typeof v==='string'&&v.trim().toLowerCase()==='order'){oc=c;hr=r;break;} } }
+    if(!oc) return;
+    set=new Set();
+    for(let r=hr+1;r<=ws.rowCount;r++){ const v=cellVal(ws.getCell(r,oc)); if(v==null||v==='')continue;
+      const m=String(v).match(/(\d{6,})/); if(m)set.add(m[1]); }
+  });
+  return set;
 }
 
 // ---- ExcelJS styling ----
@@ -232,42 +250,43 @@ function pklBlock(ws, meta, top){
   S(ws,rr(23),1,"By Sea"); S(ws,rr(23),4,meta.etd||"");
   S(ws,rr(26),1,"HKM Order No.:",{b:1}); S(ws,rr(26),2,meta.order);
   S(ws,rr(27),1,"DC Number:",{b:1}); S(ws,rr(27),2,meta.dcNumber);
-  // Prepack summary
-  ["CTN NO.","Article Description",null,"HKM Prepack No.",null,null,null,"Colour",null,null,null,null,"QTY in CTN",null,null,null,"Total/Pacl",null,null,null,"Total/Pacl"]
-    .forEach((t,i)=>{ if(t)S(ws,rr(29),i+1,t,{b:1,bd:1,al:CEN,fill:HDRFILL}); });
-  S(ws,rr(30),1,meta.cartonRange,{bd:1}); S(ws,rr(30),2,meta.desc,{bd:1});
-  S(ws,rr(30),4,"",{bd:1}); S(ws,rr(30),8,meta.colour,{bd:1});
-  S(ws,rr(30),13,meta.cartonRange,{bd:1}); S(ws,rr(30),17,meta.cartons,{bd:1}); S(ws,rr(30),21,meta.cartons,{bd:1});
+  // Prepack summary (lien mach, khong cot trong)
+  const ph=rr(29);
+  ["CTN NO.","Article Description","HKM Prepack No.","Colour","QTY in CTN","Total/Pacl"]
+    .forEach((t,i)=>S(ws,ph,i+1,t,{b:1,bd:1,al:CEN,fill:HDRFILL}));
+  S(ws,ph+1,1,meta.cartonRange,{bd:1,al:CEN}); S(ws,ph+1,2,meta.desc,{bd:1,al:LEFTAL});
+  S(ws,ph+1,3,"",{bd:1}); S(ws,ph+1,4,meta.colour,{bd:1,al:LEFTAL});
+  S(ws,ph+1,5,meta.cartonRange,{bd:1,al:CEN}); S(ws,ph+1,6,meta.cartons,{bd:1,al:CEN});
   S(ws,rr(33),1,"Contents Prepack:",{b:1});
-  S(ws,rr(34),1,"");
-  // Size matrix: moi detail row -> 1 cot (bat dau cot 6=F)
-  const mh=rr(38); const c0=6;
+  // Bang chi tiet ma tran — LIEN MACH, moi dong chi tiet = 1 cot size, ke vien toan bo
+  const mh=rr(38); const szc0=4; const nS=meta.rows.length; const lastSize=szc0+nS-1; const rc=lastSize+1;
   S(ws,mh,1,"CTN NO.",{b:1,bd:1,al:CEN,fill:HDRFILL});
   S(ws,mh,2,"EAN Code",{b:1,bd:1,al:CEN,fill:HDRFILL});
   S(ws,mh,3,"Colour",{b:1,bd:1,al:CEN,fill:HDRFILL});
-  meta.rows.forEach((x,i)=>S(ws,mh,c0+i,x.size,{b:1,bd:1,al:CEN,fill:HDRFILL}));
-  const d0=rr(40);
+  meta.rows.forEach((x,i)=>S(ws,mh,szc0+i,x.size,{b:1,bd:1,al:CEN,fill:HDRFILL}));
+  ["Prepack","=","TTL.QTY","G.W","N.W","MEAS"].forEach((t,i)=>S(ws,mh,rc+i,t,{b:1,bd:1,al:CEN,fill:HDRFILL}));
+  const d0=mh+1;
   meta.rows.forEach((x,i)=>{
-    const r=d0+i;
-    const cf=(x.cfrom!=null?x.cfrom:''), ct=(x.cto!=null?x.cto:cf);
+    const r=d0+i; const cf=(x.cfrom!=null?x.cfrom:''), ct=(x.cto!=null?x.cto:cf);
     S(ws,r,1,(cf!==''?(cf+'-'+ct):''),{bd:1,al:CEN});
     S(ws,r,2,(i===0?meta.order:''),{bd:1,al:CEN});
     S(ws,r,3,(i===0?meta.colour:''),{bd:1,al:LEFTAL});
-    S(ws,r,c0+i,x.real,{bd:1,al:CEN});
+    for(let c=szc0;c<=lastSize;c++) S(ws,r,c,(c===szc0+i?x.real:null),{bd:1,al:CEN});
+    S(ws,r,rc,(x.boxes||0)+' * '+(x.qtyctn||0),{bd:1,al:CEN});
+    S(ws,r,rc+1,"=",{bd:1,al:CEN});
+    S(ws,r,rc+2,x.real,{bd:1,al:CEN});
+    S(ws,r,rc+3,round(x.gw,2),{bd:1,al:CEN});
+    S(ws,r,rc+4,round(x.nw,2),{bd:1,al:CEN});
+    S(ws,r,rc+5,x.csize,{bd:1,al:CEN});
   });
-  let r = d0 + meta.rows.length + 2;
-  S(ws,r,1,meta.cartonRange,{b:1}); r++;
-  // Colour and size breakdown
-  r++; S(ws,r,1,"Colour and size breakdown:",{b:1}); r++;
-  const bh=r;
-  S(ws,bh,1,"Article Number",{b:1,bd:1,al:CEN,fill:HDRFILL});
-  S(ws,bh,2,"Order Nr",{b:1,bd:1,al:CEN,fill:HDRFILL});
-  S(ws,bh,3,"Colour",{b:1,bd:1,al:CEN,fill:HDRFILL});
-  meta.rows.forEach((x,i)=>S(ws,bh,c0+i,x.size,{b:1,bd:1,al:CEN,fill:HDRFILL}));
-  const bd=bh+1;
-  S(ws,bd,1,meta.article,{bd:1,al:CEN}); S(ws,bd,2,meta.order,{bd:1,al:CEN}); S(ws,bd,3,meta.colour,{bd:1,al:LEFTAL});
-  meta.rows.forEach((x,i)=>S(ws,bd,c0+i,x.real,{bd:1,al:CEN}));
-  r = bd + 2;
+  let r = d0 + nS;
+  const csizes=[...new Set(meta.rows.map(x=>x.csize).filter(Boolean))].join('; ');
+  // Dong TOTAL lien mach (vien het cac cot)
+  S(ws,r,1,"TOTAL",{b:1,bd:1,al:CEN});
+  for(let c=2;c<rc;c++) S(ws,r,c,null,{bd:1});
+  S(ws,r,rc,meta.cartons+" ctns",{b:1,bd:1,al:CEN}); S(ws,r,rc+1,"=",{b:1,bd:1,al:CEN}); S(ws,r,rc+2,meta.tot.qty,{b:1,bd:1,al:CEN});
+  S(ws,r,rc+3,round(meta.tot.gw,2),{b:1,bd:1,al:CEN}); S(ws,r,rc+4,round(meta.tot.nw,2),{b:1,bd:1,al:CEN}); S(ws,r,rc+5,round(meta.tot.vol,3)+" M³",{b:1,bd:1,al:CEN});
+  r++; S(ws,r,1,"Measures/cm:",{b:1}); S(ws,r,3,csizes); r+=2;
   // TOTAL + shipping marks
   S(ws,r,1,"TOTAL:",{b:1}); S(ws,r,2,meta.cartons,{b:1}); S(ws,r,3,"EXPORT CARTONS ONLY."); r++;
   S(ws,r,1,"SHIPPING MARKS:",{b:1}); S(ws,r,3,"HUNKEMÖLLER B.V.",{b:1}); r++;
@@ -282,7 +301,7 @@ function pklBlock(ws, meta, top){
 }
 
 function buildPklSheet(ws, group){
-  ws.columns=[{width:12},{width:14},{width:16},{width:6},{width:6}].concat(Array.from({length:80},()=>({width:6})));
+  ws.columns=[{width:11},{width:20},{width:16}].concat(Array.from({length:230},()=>({width:8})));
   let top=2;
   group.markets.forEach(m=>{ top=pklBlock(ws,m,top); });
 }
@@ -308,12 +327,12 @@ function buildInvSheet(ws, group, invNo, invDate, etd){
   deliv.forEach((p,i)=>{S(ws,13+i,5,p[0]);S(ws,13+i,6,p[1]);});
   // detail: moi DC (thi truong) 1 dong
   let h=26;
-  ["PO","ARTICLE","ARTICLE DESCRIPTION","DC / THỊ TRƯỜNG","Qty Real (Pcs)","PRICE\n(USD)","TOTAL AMOUNT\n(USD)"]
+  ["PO","ARTICLE","ARTICLE DESCRIPTION","DC","Qty Real (Pcs)","PRICE\n(USD)","TOTAL AMOUNT\n(USD)"]
     .forEach((t,i)=>S(ws,h,i+1,t,{b:1,al:CEN,fill:HDRFILL,bd:1}));
   let r=h+1, tq=0, tctn=0, tnw=0, tgw=0, tvol=0;
   group.markets.forEach(m=>{
-    S(ws,r,1,group.po,{bd:1}); S(ws,r,2,m.article,{bd:1}); S(ws,r,3,m.desc,{bd:1});
-    S(ws,r,4,m.dcNumber,{bd:1}); S(ws,r,5,m.tot.qty,{bd:1,al:CEN});
+    S(ws,r,1,group.po,{bd:1}); S(ws,r,2,m.article,{bd:1}); S(ws,r,3,m.refText,{bd:1});
+    S(ws,r,4,m.dc4,{bd:1,al:CEN}); S(ws,r,5,m.tot.qty,{bd:1,al:CEN});
     S(ws,r,6,"",{bd:1}); S(ws,r,7,"",{bd:1});
     tq+=m.tot.qty; tctn+=m.tot.ctn; tnw+=m.tot.nw; tgw+=m.tot.gw; tvol+=m.tot.vol; r++;
   });
@@ -388,8 +407,12 @@ async function loadFile(file){
     PARSED=[]; let skipped=0;
     wb.eachSheet(ws=>{ const bs=parseBlocks(ws); if(bs.length)PARSED.push(...bs); else skipped++; });
     GROUPS=groupByPo(PARSED);
-    if(!GROUPS.length){ $('#status').innerHTML='<span style="color:#b45309">Không tìm thấy sheet PO chuẩn nào.</span>'; return; }
-    $('#status').innerHTML=`<span style="color:#1e7d3a">✔ Đọc được <b>${PARSED.length}</b> thị trường → gộp thành <b>${GROUPS.length}</b> PO`+(skipped?` (bỏ qua ${skipped} sheet khác)`:'')+`.</span>`;
+    const dl=deliveryPOs(wb); let dlNote='';
+    if(dl && dl.size){ const before=GROUPS.length; GROUPS=GROUPS.filter(g=>dl.has(g.po));
+      dlNote=` · lọc theo Delivery List: giữ <b>${GROUPS.length}</b>/${before} PO`; }
+    else dlNote=' · (không thấy sheet Delivery List → hiện tất cả PO)';
+    if(!GROUPS.length){ $('#status').innerHTML='<span style="color:#b45309">Không có PO nào khớp Delivery List.</span>'; return; }
+    $('#status').innerHTML=`<span style="color:#1e7d3a">✔ Đọc được <b>${PARSED.length}</b> thị trường → <b>${GROUPS.length}</b> PO`+dlNote+(skipped?` (bỏ qua ${skipped} sheet)`:'')+`.</span>`;
     $('#optCard').style.display='block'; $('#poCard').style.display='block'; $('#genCard').style.display='block';
     renderTable();
   }catch(e){ $('#status').innerHTML='<span style="color:#c0392b">Lỗi đọc file: '+esc(e.message)+'</span>'; console.error(e); }
