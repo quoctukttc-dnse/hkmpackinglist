@@ -26,7 +26,7 @@
   th,td{padding:8px 10px;border-bottom:1px solid #eef1f6;text-align:left}
   th{background:#f7f9fd;font-size:11px;text-transform:uppercase;letter-spacing:.3px;color:#5a6678;position:sticky;top:0}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
-  .scroll{max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  .scroll{max-height:380px;overflow:auto;border:1px solid var(--line);border-radius:8px}
   .btn{background:var(--blue);color:#fff;border:0;padding:11px 20px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer}
   .btn:hover{background:#173a5c}
   .btn.sec{background:#fff;color:var(--blue);border:1.5px solid var(--blue)}
@@ -34,18 +34,17 @@
   .bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px}
   .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
   .pill.ok{background:#e6f4ea;color:var(--ok)}
-  .pill.skip{background:#fdf0e3;color:var(--warn)}
+  .pill.multi{background:#e7effb;color:var(--blue2)}
   .muted{color:#8592a6;font-size:12px}
-  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
   .note{font-size:12px;color:#8592a6;margin-top:10px}
-  a.small{color:var(--blue2);font-size:12px;cursor:pointer}
   #status{font-size:13px;margin-left:6px}
 </style>
 </head>
 <body>
 <header>
   <h1>Chuyển Gút hàng → Invoice + Packing List</h1>
-  <p>Upload file gút hàng (.xlsx) → chọn PO → tải về file INV và PKL chi tiết theo size. Giá để trống điền sau.</p>
+  <p>Upload file gút hàng (.xlsx) → chọn PO → tải về INV + PKL. Mỗi PO gộp vào 1 sheet (nhiều thị trường xếp chồng). Giá để trống điền sau.</p>
 </header>
 <div class="wrap">
 
@@ -60,11 +59,11 @@
   <div class="card" id="optCard" style="display:none">
     <h2>2 · Thông tin invoice</h2>
     <div class="row">
-      <div class="fld"><label>Số invoice gốc (base)</label><input type="text" id="invBase" placeholder="VD: 73261357"></div>
+      <div class="fld"><label>Số invoice gốc (base)</label><input type="text" id="invBase" placeholder="VD: 7326847"></div>
       <div class="fld"><label>Ngày invoice</label><input type="date" id="invDate"></div>
-      <div class="fld"><label>ETD (ngày tàu chạy)</label><input type="date" id="etd"></div>
+      <div class="fld"><label>ETD / Sailing</label><input type="date" id="etd"></div>
     </div>
-    <p class="note">Mỗi PO sẽ nhận số invoice dạng <b>&lt;base&gt;-01, -02, …</b> theo thứ tự được chọn.</p>
+    <p class="note">Mỗi PO nhận số invoice dạng <b>&lt;base&gt;-01, -02, …</b> theo thứ tự. Các trường không có trong gút (EAN, prepack no, consolidation…) để trống.</p>
   </div>
 
   <div class="card" id="poCard" style="display:none">
@@ -76,8 +75,8 @@
     </div>
     <div class="scroll">
       <table id="poTable">
-        <thead><tr><th style="width:36px"></th><th>Sheet / PO</th><th>Mã hàng</th><th>Màu</th>
-          <th class="num">Pcs</th><th class="num">Cartons</th><th class="num">N.W</th><th class="num">G.W</th><th class="num">CBM</th><th>Trạng thái</th></tr></thead>
+        <thead><tr><th style="width:36px"></th><th>PO</th><th>Thị trường (DC)</th><th>Mã hàng</th>
+          <th class="num">Pcs</th><th class="num">Cartons</th><th>Trạng thái</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -91,7 +90,7 @@
       <button class="btn sec" id="genBoth">⬇ Tải cả hai</button>
       <span id="genStatus" class="muted"></span>
     </div>
-    <p class="note">INV: cột PRICE và TOTAL AMOUNT để trống (điền sau). PKL: chi tiết từng size, kèm số carton, N.W, G.W, CBM.</p>
+    <p class="note">PKL: mỗi PO 1 sheet, mỗi thị trường 1 block (header + prepack + ma trận size + colour/size breakdown + shipping marks). INV: mỗi PO 1 sheet, mỗi DC 1 dòng.</p>
   </div>
 
 </div>
@@ -99,78 +98,73 @@
 <script>
 const $ = s => document.querySelector(s);
 const SIZE_RE = /^(XXS|XS|S|M|L|XL|XXL|XXXL)$|^[A-Z]{1,3}\d{2,3}$/;
-let PARSED = [];   // danh sach PO da parse
+let PARSED = [];   // moi phan tu = 1 sheet nguon (1 thi truong)
+let GROUPS = [];   // gom theo so PO: {po, markets:[meta,...]}
 
-// ---- template constants (trich tu file INV mau) ----
+// ---- template constants ----
+const SUP = {name:"SCAVI HUE COMPANY",addr:"Phong Dien Industrial Zone, Phong Thu Ward, Phong Dien Town, ",
+  city:"Hue City, ",country:"Viet Nam.",tel:"(84) 234 3751751",fax:"(84) 234 3751761"};
+const CNEE = ["HUNKEMOLLER B.V","P.O. Box 386 - 1200 AJ Hilversum-NL","Koos Postemalaan 8 - 1217 ZC Hilversum","The Netherlands"];
+// INV template
 const EXPORTER = ["SCAVI HUE COMPANY","Phong Dien Industrial Zone, Phong Dien Ward, Hue City, Viet Nam.","Tel: (84) 234 3751751","Fax : (84) 234 3751761"];
 const SOLDTO = ["HUNKEMOLLER INTERNATIONAL B.V","P.O. Box 386 - 1200 AJ Hilversum-NL","Koos Postemalaan 8 - 1217 ZC Hilversum - The Netherlands","Tel: +31 (0) 35 646 5446","VAT number NL85.85.08.503.B01"];
 const BANK_EXP = [["Beneficiary","SCAVI HUE COMPANY"],["Bank name","Vietnam Joint Stock Commercial Bank For Industry and Trade - Dong Nai"],["Bank address"," 77D Hung Dao Vuong Street, Bien Hoa City, Dong Nai Province, Viet Nam"],["Account number","119000200238"],["Swift code","ICBVVNVX680"]];
 const BANK_IMP = [["Bank name","ING Bank N.V."],["Bank address","Bijlmerplein 888, 1102MG Amsterdam, The Netherlands"],["Account number","65.02.61.887"],["Swift code","INGBNL2A"]];
 
 // ---- helpers ----
-function cellVal(cell){
-  let v = cell.value;
-  if(v===null||v===undefined) return null;
-  if(typeof v==='object'){
-    if(v.result!==undefined) return v.result;        // formula
-    if(v.text!==undefined) return v.text;             // hyperlink
-    if(v.richText) return v.richText.map(t=>t.text).join('');
-    if(v instanceof Date) return v;
-  }
-  return v;
-}
-const num = v => (typeof v==='number' && isFinite(v)) ? v : 0;
-function articleOf(ref){
-  if(ref===null||ref===undefined) return ["",""];
-  const s = String(ref).trim();
-  const m = s.match(/^(\d{4,})\s*(.*)$/);
-  if(m) return [m[1], m[2].trim().toUpperCase()];
-  return ["", s.toUpperCase()];
+function cellVal(cell){ let v=cell.value; if(v===null||v===undefined)return null;
+  if(typeof v==='object'){ if(v.result!==undefined)return v.result; if(v.text!==undefined)return v.text;
+    if(v.richText)return v.richText.map(t=>t.text).join(''); if(v instanceof Date)return v; } return v; }
+const num=v=>(typeof v==='number'&&isFinite(v))?v:0;
+const cap=(v,mx)=>{const n=num(v);return (isFinite(n)&&Math.abs(n)<mx)?n:0;}; // loc gia tri rac
+const round=(v,n)=>{const p=Math.pow(10,n);return Math.round(v*p)/p;};
+function articleOf(ref){ if(ref==null)return["",""]; const s=String(ref).trim();
+  const m=s.match(/^(\d{4,})\s*(.*)$/); if(m)return[m[1],(m[2]||'').trim().toUpperCase()]; return["",s.toUpperCase()]; }
+function poOf(order,sheet){
+  const s=String(order!=null?order:sheet);
+  const m=s.match(/(\d{6,})/); return m?m[1]:String(sheet).trim();
 }
 
-function parseSheet(ws){
-  // tim dong header bang (co Reference + Size)
-  let hdr=null, colmap={};
-  for(let r=1;r<=14;r++){
-    let txt=[];
-    for(let c=1;c<=14;c++){ const v=cellVal(ws.getCell(r,c)); txt.push(v?String(v).trim().toLowerCase():''); }
-    if(txt.includes('reference') && txt.includes('size')){ hdr=r; break; }
+// Mot sheet co the chua NHIEU packing list xep chong -> tach theo tung dong header (Reference+Size)
+function parseBlocks(ws){
+  const maxr=ws.rowCount; const headers=[];
+  for(let r=1;r<=maxr;r++){ let txt=[]; for(let c=1;c<=15;c++){const v=cellVal(ws.getCell(r,c));txt.push(v?String(v).trim().toLowerCase():'');}
+    if(txt.includes('reference')&&txt.includes('size')) headers.push(r); }
+  const out=[];
+  for(let hi=0;hi<headers.length;hi++){
+    const hr=headers[hi]; const endR=(hi+1<headers.length)?headers[hi+1]-1:maxr;
+    const m=parseOneBlock(ws,hr,endR,headers.length>1?hi+1:0);
+    if(m) out.push(m);
   }
-  if(!hdr) return null;
-  for(let c=1;c<=15;c++){ const v=cellVal(ws.getCell(hdr,c)); if(v) colmap[String(v).trim().toLowerCase().replace(/\n/g,' ')]=c; }
-  const col=(...names)=>{ for(const n of names){ for(const k in colmap){ if(k.includes(n)) return colmap[k]; } } return null; };
+  return out;
+}
+function parseOneBlock(ws,hdr,endR,blockNo){
+  let colmap={};
+  for(let c=1;c<=16;c++){ const v=cellVal(ws.getCell(hdr,c)); if(v)colmap[String(v).trim().toLowerCase().replace(/\n/g,' ')]=c; }
+  const col=(...names)=>{ for(const n of names){ for(const k in colmap){ if(k.includes(n))return colmap[k]; } } return null; };
   const C={from:col('ctn from','from')||1,to:col('ctn to')||2,ref:col('reference')||3,color:col('color','colour')||4,
     size:col('size')||5,qty:col('qty')||6,box:col('number of box','box')||7,real:col('real qty')||8,
     vol:col('vol')||9,nw:col('nw','n.w')||10,gw:col('wg','g.w','gw')||11,csize:col('carton size')||12};
-  // meta header
-  const meta={order:null,customer:null,dc:null,dest:null,warehouse:null,season:null};
-  for(let r=1;r<=6;r++){ for(let c=1;c<=13;c++){
+  const meta={order:null,customer:null,dc:null,dest:null,warehouse:null};
+  for(let r=Math.max(1,hdr-6);r<hdr;r++){ for(let c=1;c<=14;c++){
     const v=cellVal(ws.getCell(r,c)); if(typeof v!=='string') continue;
     const lv=v.trim().toLowerCase(); const nx=cellVal(ws.getCell(r,c+1));
-    if(lv.startsWith('order')) meta.order=nx;
-    else if(lv.startsWith('customer')) meta.customer=nx;
-    else if(lv==='dc') meta.dc=nx;
-    else if(lv.startsWith('destination')) meta.dest=nx;
+    if(lv.startsWith('order')) meta.order=nx; else if(lv.startsWith('customer')) meta.customer=nx;
+    else if(lv==='dc') meta.dc=nx; else if(lv.startsWith('destination')) meta.dest=nx;
     else if(lv.startsWith('warehouse')) meta.warehouse=nx;
-    else if(lv.startsWith('season')) meta.season=nx;
   }}
   if(!meta.order) meta.order=ws.name.trim();
-  // rows: phan biet dong CHI TIET (co size) va dong SUBTOTAL (size trong nhung box&realqty co so)
-  const rows=[];
-  const gtot={ctn:0,qty:0,vol:0,nw:0,gw:0}; let nsub=0;          // tong tu dong subtotal
-  const dtot={ctn:0,qty:0,vol:0,nw:0,gw:0};                       // tong tu dong chi tiet (fallback)
-  let lastRef=null,lastColor=null;
-  const last=ws.rowCount;
+  const rows=[]; const gtot={ctn:0,qty:0,vol:0,nw:0,gw:0}; const dtot={ctn:0,qty:0,vol:0,nw:0,gw:0}; let nsub=0;
+  let lastRef=null,lastColor=null; const last=endR;
   for(let r=hdr+1;r<=last;r++){
     const rv=cellVal(ws.getCell(r,C.ref)); if(rv!==null&&rv!=='') lastRef=rv;
     const cv=cellVal(ws.getCell(r,C.color)); if(cv!==null&&cv!=='') lastColor=cv;
     let size=cellVal(ws.getCell(r,C.size));
     const boxRaw=cellVal(ws.getCell(r,C.box)), realRaw=cellVal(ws.getCell(r,C.real));
-    const box=num(boxRaw), real=num(realRaw), vol=num(cellVal(ws.getCell(r,C.vol)));
-    const nw=num(cellVal(ws.getCell(r,C.nw))), gw=num(cellVal(ws.getCell(r,C.gw)));
-    const isSize = (typeof size==='string' && SIZE_RE.test(size.trim().toUpperCase()));
+    const box=num(boxRaw), real=num(realRaw), vol=cap(cellVal(ws.getCell(r,C.vol)),1e5);
+    const nw=cap(cellVal(ws.getCell(r,C.nw)),1e6), gw=cap(cellVal(ws.getCell(r,C.gw)),1e6);
+    const isSize=(typeof size==='string' && SIZE_RE.test(size.trim().toUpperCase()));
     if(!isSize){
-      // dong subtotal: khong co size nhung co so thung & so luong -> tong chinh xac (theo file)
       if((size===null||size===undefined||size==='') && typeof boxRaw==='number' && typeof realRaw==='number' && real>0){
         gtot.ctn+=box; gtot.qty+=real; gtot.vol+=vol; gtot.nw+=nw; gtot.gw+=gw; nsub++;
       }
@@ -179,190 +173,239 @@ function parseSheet(ws){
     if(real<=0) continue;
     const [art,desc]=articleOf(lastRef);
     rows.push({cfrom:cellVal(ws.getCell(r,C.from)),cto:cellVal(ws.getCell(r,C.to)),ref:lastRef,art,desc,
-      color:lastColor,size:size.trim().toUpperCase(),qty_ctn:num(cellVal(ws.getCell(r,C.qty))),
-      boxes:box,real,vol,nw,gw,csize:cellVal(ws.getCell(r,C.csize))});
+      color:lastColor,size:size.trim().toUpperCase(),boxes:box,real,vol,nw,gw,csize:cellVal(ws.getCell(r,C.csize))});
     dtot.ctn+=box; dtot.qty+=real; dtot.vol+=vol; dtot.nw+=nw; dtot.gw+=gw;
   }
   if(!rows.length && nsub===0) return null;
-  // Uu tien tong tu dong subtotal (khop cach tinh cua file goc); neu khong co thi dung tong chi tiet
-  const tot = (nsub>0) ? gtot : dtot;
-  const arts={};
-  for(const x of rows){ const k=x.art+'||'+x.desc; arts[k]=(arts[k]||0)+x.real; }
-  meta.rows=rows; meta.tot=tot; meta.articles=arts; meta.sheet=ws.name;
+  const tot=(nsub>0)?gtot:dtot;
+  // thong tin tong hop cho header/prepack
+  const firstRef = rows.length?rows[0].ref:(lastRef||'');
+  const [art0,desc0]=articleOf(firstRef);
+  meta.rows=rows; meta.tot=tot;
+  meta.sheet=ws.name + (blockNo?(' #'+blockNo):'');
+  meta.po=poOf(meta.order, ws.name);
+  meta.article=art0; meta.desc=desc0 || (meta.customer?String(meta.customer).toUpperCase():'');
+  meta.colour=rows.length?rows[0].color:'';
+  meta.dcNumber=[meta.dc,meta.warehouse,meta.dest].filter(x=>x!=null&&x!=='').join('/');
+  meta.cartons=Math.round(tot.ctn);
+  meta.cartonRange = meta.cartons>0 ? ('1-'+meta.cartons) : '';
+  // articles gop cho invoice
+  const arts={}; for(const x of rows){ const k=x.art+'||'+x.desc; arts[k]=(arts[k]||0)+x.real; } meta.articles=arts;
   return meta;
 }
 
-// ---- styling helpers for ExcelJS ----
+function groupByPo(list){
+  const map={};
+  list.forEach(m=>{ (map[m.po]=map[m.po]||[]).push(m); });
+  return Object.keys(map).map(po=>({po, markets:map[po]}));
+}
+
+// ---- ExcelJS styling ----
 const THIN={style:'thin'};
 const BORDER={top:THIN,left:THIN,bottom:THIN,right:THIN};
-const CENTER={horizontal:'center',vertical:'middle',wrapText:true};
-const LEFT={horizontal:'left',vertical:'middle',wrapText:true};
+const CEN={horizontal:'center',vertical:'middle',wrapText:true};
+const LEFTAL={horizontal:'left',vertical:'middle',wrapText:true};
 const HDRFILL={type:'pattern',pattern:'solid',fgColor:{argb:'FFD9E1F2'}};
-const TITLEFILL={type:'pattern',pattern:'solid',fgColor:{argb:'FF1F4E78'}};
-function set(ws,addr,val,opt={}){ const c=ws.getCell(addr); c.value=val;
-  if(opt.b) c.font={...(c.font||{}),bold:true};
-  if(opt.font) c.font=opt.font;
-  if(opt.align) c.alignment=opt.align;
-  if(opt.fill) c.fill=opt.fill;
-  if(opt.border) c.border=BORDER;
-  return c; }
-const dcLabel = v => v==null?'':(String(v).toUpperCase().includes('DC')?String(v):'DC '+v);
+function S(ws,r,c,v,o){o=o||{};const cell=ws.getCell(r,c);cell.value=(v===undefined?null:v);
+  const f={}; if(o.b)f.bold=true; if(o.size)f.size=o.size; if(o.color)f.color={argb:o.color};
+  if(Object.keys(f).length)cell.font=f;
+  if(o.al)cell.alignment=o.al; if(o.fill)cell.fill=o.fill; if(o.bd)cell.border=BORDER; return cell;}
 
-function buildInv(ws,meta,invNo,invDate,etd){
-  ws.columns=[{width:26},{width:26},{width:30},{width:12},{width:12},{width:12},{width:16}];
-  ws.mergeCells('A1:G1');
-  set(ws,'A1','COMMERCIAL INVOICE',{font:{bold:true,size:14,color:{argb:'FFFFFFFF'}},align:CENTER,fill:TITLEFILL});
-  set(ws,'A2','INVOICE NO',{b:1}); set(ws,'B2',invNo);
-  set(ws,'A3','INVOICE DATE',{b:1}); set(ws,'B3',invDate||'');
-  set(ws,'A4','HUNKEMOLLER PURCHASE ORDER NUMBER',{b:1}); set(ws,'B4',meta.order);
-  set(ws,'A5','Exporter Name and Address:',{b:1}); set(ws,'E5','Sold To Name and Address:',{b:1});
-  EXPORTER.forEach((l,i)=>set(ws,'A'+(6+i),l));
-  SOLDTO.forEach((l,i)=>set(ws,'E'+(6+i),l));
-  set(ws,'A12','Information Bank of Exporter',{b:1}); set(ws,'E12','Delivery Condition',{b:1});
-  BANK_EXP.forEach((p,i)=>{ set(ws,'A'+(13+i),p[0]); set(ws,'B'+(13+i),p[1]); });
-  set(ws,'A18','Information Bank of Importer',{b:1});
-  BANK_IMP.forEach((p,i)=>{ set(ws,'A'+(19+i),p[0]); set(ws,'B'+(19+i),p[1]); });
-  const deliv=[['Term of delivery :','FOB HO CHI MINH'],['Mode of shipment :','BY SEA'],['ETD',etd||''],
-    ['Port of loading','HO CHI MINH'],['Port of Discharge','ROTTERDAM, NETHERLANDS'],
-    ['Terms of payment','TT 30 days after the date of the Invoice, 6.5% discount'],
-    ['Currency','USD'],['Order number:',meta.order],['Container/ Seal:',''],['Bill of lading/ FCR:','']];
-  deliv.forEach((p,i)=>{ set(ws,'E'+(13+i),p[0]); set(ws,'F'+(13+i),p[1]); });
-  // bang chi tiet
-  let h=26;
-  ['PO','ARTICLE NUMBER','ARTICLE DESCRIPTION','Qty Real (Pcs)','DC','PRICE\n(USD)','TOTAL AMOUNT\n(USD)']
-    .forEach((t,i)=>set(ws,ws.getCell(h,i+1).address,t,{b:1,align:CENTER,fill:HDRFILL,border:1}));
-  let r=h+1, tq=0; const dc=dcLabel(meta.dc);
-  for(const k in meta.articles){ const [art,desc]=k.split('||'); const q=meta.articles[k];
-    const vals=[meta.order,art,desc,q,dc,'',''];
-    vals.forEach((v,i)=>{ const c=ws.getCell(r,i+1); c.value=v; c.border=BORDER; if(i===3)c.alignment=CENTER; });
-    tq+=q; r++; }
-  ws.getCell(r,1).value='INVOICE TOTAL'; ws.getCell(r,1).font={bold:true};
-  ws.getCell(r,4).value=tq; ws.getCell(r,4).font={bold:true}; ws.getCell(r,4).alignment=CENTER;
-  for(let c=1;c<=7;c++) ws.getCell(r,c).border=BORDER;
-  r+=2; const t=meta.tot;
-  const summ=[['THE ORDER:',meta.order,'',''],['TOTAL GROSS WEIGHT',round(t.gw,2),'DISCOUNT 6.5%',''],
-    ['TOTAL NET WEIGHT',round(t.nw,2),'',''],['TOTAL CBM',round(t.vol,3),'INVOICE TOTAL AMOUNT',''],
-    ['TOTAL CARTONS',Math.round(t.ctn),'','']];
-  for(const [a,b,e,f] of summ){ set(ws,'A'+r,a,{b:1}); ws.getCell(r,2).value=b;
-    if(e){ set(ws,'E'+r,e,{b:1}); ws.getCell(r,6).value=f; } r++; }
-}
-
-function buildPkl(ws,meta){
-  ws.columns=[{width:8},{width:8},{width:22},{width:14},{width:8},{width:8},{width:8},{width:12},{width:10},{width:10},{width:10},{width:14}];
-  ws.mergeCells('A1:L1');
-  set(ws,'A1','PACKING LIST',{font:{bold:true,size:14,color:{argb:'FFFFFFFF'}},align:CENTER,fill:TITLEFILL});
-  ws.mergeCells('A2:F2'); set(ws,'A2','Shipper: SCAVI HUE COMPANY - Phong Dien IZ, Hue City, Viet Nam');
-  ws.mergeCells('G2:L2'); set(ws,'G2','Consignee: HUNKEMOLLER INTERNATIONAL B.V');
-  set(ws,'A3','HKM Order No.:',{b:1}); set(ws,'B3',meta.order);
-  set(ws,'D3','Customer:',{b:1}); set(ws,'E3',meta.customer||'');
-  set(ws,'G3','DC:',{b:1}); set(ws,'H3',dcLabel(meta.dc));
-  set(ws,'A4','Destination:',{b:1}); set(ws,'B4',meta.dest||'');
-  set(ws,'D4','Warehouse:',{b:1}); set(ws,'E4',meta.warehouse||'');
-  set(ws,'G4','Port of Loading:',{b:1}); set(ws,'H4','HO CHI MINH');
-  let h=6;
-  ['CTN\nFrom','CTN\nTo','Article / Ref','Colour','Size','Qty/\nCTN','No. of\nBox','Real Qty\n(Pcs)','N.W\n(Kg)','G.W\n(Kg)','Vol\n(m3)','Carton\nSize (cm)']
-    .forEach((t,i)=>set(ws,ws.getCell(h,i+1).address,t,{b:1,align:CENTER,fill:HDRFILL,border:1}));
-  let r=h+1;
-  for(const x of meta.rows){
-    const vals=[x.cfrom,x.cto,x.ref,x.color,x.size,x.qty_ctn,x.boxes?Math.round(x.boxes):'',x.real,
-      round(x.nw,2),round(x.gw,2),round(x.vol,3),x.csize];
-    vals.forEach((v,i)=>{ const c=ws.getCell(r,i+1); c.value=v; c.border=BORDER; c.alignment=(i===2)?LEFT:CENTER; });
-    r++;
-  }
-  const t=meta.tot;
-  set(ws,'C'+r,'TOTAL',{b:1,align:CENTER});
-  const tv={7:Math.round(t.ctn),8:t.qty,9:round(t.nw,2),10:round(t.gw,2),11:round(t.vol,3)};
-  for(let c=1;c<=12;c++){ const cell=ws.getCell(r,c); cell.border=BORDER;
-    if(tv[c]!==undefined){ cell.value=tv[c]; cell.font={bold:true}; cell.alignment=CENTER; } }
-}
-const round=(v,n)=>{ const p=Math.pow(10,n); return Math.round(v*p)/p; };
-
-// ---- selection / rendering ----
-function selectedMetas(){
-  const out=[];
-  document.querySelectorAll('#poTable tbody input[type=checkbox]:checked').forEach(cb=>{
-    out.push(PARSED[+cb.dataset.i]);
+// ==== PKL: 1 block cho 1 thi truong, bat dau tai row top ====
+function pklBlock(ws, meta, top){
+  const rr = n => top + (n - 2);           // template row n -> actual
+  S(ws,rr(2),13,"Packinglist",{b:1,size:12});
+  S(ws,rr(4),1,"Shipper/Exporter",{b:1}); S(ws,rr(4),13,"No. and date of invoice",{b:1});
+  S(ws,rr(5),1,"Supplier Name"); S(ws,rr(5),2,SUP.name); S(ws,rr(5),13,"Invoice No.:"); S(ws,rr(5),17,meta.invNo||"");
+  S(ws,rr(6),1,"Supplier adress"); S(ws,rr(6),2,SUP.addr); S(ws,rr(6),13,"Date:"); S(ws,rr(6),17,meta.invDate||"");
+  S(ws,rr(7),1,"Supplier city"); S(ws,rr(7),2,SUP.city);
+  S(ws,rr(8),1,"Supplier country"); S(ws,rr(8),2,SUP.country);
+  S(ws,rr(9),1,"Telephone number"); S(ws,rr(9),2,SUP.tel); S(ws,rr(9),3,"Fax number"); S(ws,rr(9),4,SUP.fax);
+  S(ws,rr(10),1,"Consignee",{b:1}); S(ws,rr(10),13,"Remarks",{b:1});
+  CNEE.forEach((l,i)=>S(ws,rr(11)+i,1,l));
+  S(ws,rr(14),13,"Shipped per: ");
+  S(ws,rr(15),1,"Notify Party",{b:1}); S(ws,rr(15),13,"FCR Number: ");
+  CNEE.forEach((l,i)=>S(ws,rr(16)+i,1,l));
+  S(ws,rr(20),1,"Port of Loading",{b:1}); S(ws,rr(20),4,"Port of Unloading",{b:1});
+  S(ws,rr(21),1,"HO CHI MINH"); S(ws,rr(21),4,"Rotterdam, The Netherlands");
+  S(ws,rr(22),1,"Carrier",{b:1}); S(ws,rr(22),4,"Sailing on or about",{b:1});
+  S(ws,rr(23),1,"By Sea"); S(ws,rr(23),4,meta.etd||"");
+  S(ws,rr(26),1,"HKM Order No.:",{b:1}); S(ws,rr(26),2,meta.order);
+  S(ws,rr(27),1,"DC Number:",{b:1}); S(ws,rr(27),2,meta.dcNumber);
+  // Prepack summary
+  ["CTN NO.","Article Description",null,"HKM Prepack No.",null,null,null,"Colour",null,null,null,null,"QTY in CTN",null,null,null,"Total/Pacl",null,null,null,"Total/Pacl"]
+    .forEach((t,i)=>{ if(t)S(ws,rr(29),i+1,t,{b:1,bd:1,al:CEN,fill:HDRFILL}); });
+  S(ws,rr(30),1,meta.cartonRange,{bd:1}); S(ws,rr(30),2,meta.desc,{bd:1});
+  S(ws,rr(30),4,"",{bd:1}); S(ws,rr(30),8,meta.colour,{bd:1});
+  S(ws,rr(30),13,meta.cartonRange,{bd:1}); S(ws,rr(30),17,meta.cartons,{bd:1}); S(ws,rr(30),21,meta.cartons,{bd:1});
+  S(ws,rr(33),1,"Contents Prepack:",{b:1});
+  S(ws,rr(34),1,"");
+  // Size matrix: moi detail row -> 1 cot (bat dau cot 6=F)
+  const mh=rr(38); const c0=6;
+  S(ws,mh,1,"CTN NO.",{b:1,bd:1,al:CEN,fill:HDRFILL});
+  S(ws,mh,2,"EAN Code",{b:1,bd:1,al:CEN,fill:HDRFILL});
+  S(ws,mh,3,"Colour",{b:1,bd:1,al:CEN,fill:HDRFILL});
+  meta.rows.forEach((x,i)=>S(ws,mh,c0+i,x.size,{b:1,bd:1,al:CEN,fill:HDRFILL}));
+  const d0=rr(40);
+  meta.rows.forEach((x,i)=>{
+    const r=d0+i;
+    const cf=(x.cfrom!=null?x.cfrom:''), ct=(x.cto!=null?x.cto:cf);
+    S(ws,r,1,(cf!==''?(cf+'-'+ct):''),{bd:1,al:CEN});
+    S(ws,r,2,(i===0?meta.order:''),{bd:1,al:CEN});
+    S(ws,r,3,(i===0?meta.colour:''),{bd:1,al:LEFTAL});
+    S(ws,r,c0+i,x.real,{bd:1,al:CEN});
   });
-  return out;
+  let r = d0 + meta.rows.length + 2;
+  S(ws,r,1,meta.cartonRange,{b:1}); r++;
+  // Colour and size breakdown
+  r++; S(ws,r,1,"Colour and size breakdown:",{b:1}); r++;
+  const bh=r;
+  S(ws,bh,1,"Article Number",{b:1,bd:1,al:CEN,fill:HDRFILL});
+  S(ws,bh,2,"Order Nr",{b:1,bd:1,al:CEN,fill:HDRFILL});
+  S(ws,bh,3,"Colour",{b:1,bd:1,al:CEN,fill:HDRFILL});
+  meta.rows.forEach((x,i)=>S(ws,bh,c0+i,x.size,{b:1,bd:1,al:CEN,fill:HDRFILL}));
+  const bd=bh+1;
+  S(ws,bd,1,meta.article,{bd:1,al:CEN}); S(ws,bd,2,meta.order,{bd:1,al:CEN}); S(ws,bd,3,meta.colour,{bd:1,al:LEFTAL});
+  meta.rows.forEach((x,i)=>S(ws,bd,c0+i,x.real,{bd:1,al:CEN}));
+  r = bd + 2;
+  // TOTAL + shipping marks
+  S(ws,r,1,"TOTAL:",{b:1}); S(ws,r,2,meta.cartons,{b:1}); S(ws,r,3,"EXPORT CARTONS ONLY."); r++;
+  S(ws,r,1,"SHIPPING MARKS:",{b:1}); S(ws,r,3,"HUNKEMÖLLER B.V.",{b:1}); r++;
+  S(ws,r,3,"HILVERSUM"); r++;
+  S(ws,r,3,"HUNKEMÖLLER DC:"); S(ws,r,5,meta.dcNumber); r++;
+  S(ws,r,3,"ORDERNUMBER:"); S(ws,r,5,meta.order); r++;
+  S(ws,r,3,"STORE INFORMATION:"); S(ws,r,5,"REGULAR"); r++;
+  S(ws,r,3,"CONSOLIDATION NUMBER:"); S(ws,r,5,""); r++;
+  S(ws,r,3,"ROTTERDAM"); r++;
+  S(ws,r,3,"CARTON NUMBER:"); S(ws,r,5,meta.cartonRange); r++;
+  return r + 3;   // chua 1 khoang trong truoc block ke tiep
 }
-function invBase(){ return ($('#invBase').value||'INV').trim(); }
 
-async function exportInv(){
-  const metas=selectedMetas(); if(!metas.length){ alert('Chưa chọn PO nào.'); return; }
-  const wb=new ExcelJS.Workbook();
-  const dt = $('#invDate').value ? new Date($('#invDate').value) : '';
-  const etd = $('#etd').value ? new Date($('#etd').value) : '';
-  metas.forEach((m,i)=>{ const ws=wb.addWorksheet(String(i+1).padStart(2,'0'));
-    buildInv(ws,m,invBase()+'-'+String(i+1).padStart(2,'0'),dt,etd); });
-  await download(wb,'INV '+invBase()+'.xlsx');
+function buildPklSheet(ws, group){
+  ws.columns=[{width:12},{width:14},{width:16},{width:6},{width:6}].concat(Array.from({length:80},()=>({width:6})));
+  let top=2;
+  group.markets.forEach(m=>{ top=pklBlock(ws,m,top); });
 }
+
+// ==== INV: 1 PO = 1 invoice, moi DC 1 dong ====
+function buildInvSheet(ws, group, invNo, invDate, etd){
+  ws.columns=[{width:24},{width:22},{width:28},{width:20},{width:12},{width:12},{width:16}];
+  ws.mergeCells('A1:G1');
+  S(ws,1,1,"COMMERCIAL INVOICE",{b:1,size:14,color:'FFFFFFFF',al:CEN,fill:{type:'pattern',pattern:'solid',fgColor:{argb:'FF1F4E78'}}});
+  S(ws,2,1,"INVOICE NO",{b:1}); S(ws,2,2,invNo);
+  S(ws,3,1,"INVOICE DATE",{b:1}); S(ws,3,2,invDate||"");
+  S(ws,4,1,"HUNKEMOLLER PURCHASE ORDER NUMBER",{b:1}); S(ws,4,2,group.po);
+  S(ws,5,1,"Exporter Name and Address:",{b:1}); S(ws,5,5,"Sold To Name and Address:",{b:1});
+  EXPORTER.forEach((l,i)=>S(ws,6+i,1,l)); SOLDTO.forEach((l,i)=>S(ws,6+i,5,l));
+  S(ws,12,1,"Information Bank of Exporter",{b:1}); S(ws,12,5,"Delivery Condition",{b:1});
+  BANK_EXP.forEach((p,i)=>{S(ws,13+i,1,p[0]);S(ws,13+i,2,p[1]);});
+  S(ws,18,1,"Information Bank of Importer",{b:1});
+  BANK_IMP.forEach((p,i)=>{S(ws,19+i,1,p[0]);S(ws,19+i,2,p[1]);});
+  const deliv=[["Term of delivery :","FOB HO CHI MINH"],["Mode of shipment :","BY SEA"],["ETD",etd||""],
+    ["Port of loading","HO CHI MINH"],["Port of Discharge","ROTTERDAM, NETHERLANDS"],
+    ["Terms of payment","TT 30 days after the date of the Invoice, 6.5% discount"],
+    ["Currency","USD"],["Order number:",group.po]];
+  deliv.forEach((p,i)=>{S(ws,13+i,5,p[0]);S(ws,13+i,6,p[1]);});
+  // detail: moi DC (thi truong) 1 dong
+  let h=26;
+  ["PO","ARTICLE","ARTICLE DESCRIPTION","DC / THỊ TRƯỜNG","Qty Real (Pcs)","PRICE\n(USD)","TOTAL AMOUNT\n(USD)"]
+    .forEach((t,i)=>S(ws,h,i+1,t,{b:1,al:CEN,fill:HDRFILL,bd:1}));
+  let r=h+1, tq=0, tctn=0, tnw=0, tgw=0, tvol=0;
+  group.markets.forEach(m=>{
+    S(ws,r,1,group.po,{bd:1}); S(ws,r,2,m.article,{bd:1}); S(ws,r,3,m.desc,{bd:1});
+    S(ws,r,4,m.dcNumber,{bd:1}); S(ws,r,5,m.tot.qty,{bd:1,al:CEN});
+    S(ws,r,6,"",{bd:1}); S(ws,r,7,"",{bd:1});
+    tq+=m.tot.qty; tctn+=m.tot.ctn; tnw+=m.tot.nw; tgw+=m.tot.gw; tvol+=m.tot.vol; r++;
+  });
+  S(ws,r,1,"INVOICE TOTAL",{b:1,bd:1}); S(ws,r,4,"",{bd:1}); S(ws,r,5,tq,{b:1,bd:1,al:CEN});
+  S(ws,r,2,"",{bd:1});S(ws,r,3,"",{bd:1});S(ws,r,6,"",{bd:1});S(ws,r,7,"",{bd:1});
+  r+=2;
+  const summ=[["THE ORDER:",group.po,"",""],["TOTAL GROSS WEIGHT",round(tgw,2),"DISCOUNT 6.5%",""],
+    ["TOTAL NET WEIGHT",round(tnw,2),"",""],["TOTAL CBM",round(tvol,3),"INVOICE TOTAL AMOUNT",""],
+    ["TOTAL CARTONS",Math.round(tctn),"",""]];
+  summ.forEach(([a,b,e,f])=>{S(ws,r,1,a,{b:1});S(ws,r,2,b); if(e){S(ws,r,5,e,{b:1});S(ws,r,6,f);} r++;});
+}
+
+// ---- selection ----
+function selectedGroups(){
+  const chosen=new Set();
+  document.querySelectorAll('#poTable tbody input[type=checkbox]:checked').forEach(cb=>chosen.add(cb.dataset.po));
+  return GROUPS.filter(g=>chosen.has(g.po));
+}
+const invBase=()=>($('#invBase').value||'INV').trim();
+function sheetName(po,used){ let n=String(po).slice(0,28).replace(/[\\\/\?\*\[\]:]/g,'_'); let k=n,i=2;
+  while(used.has(k)){k=(n.slice(0,26))+'_'+i;i++;} used.add(k); return k; }
+
 async function exportPkl(){
-  const metas=selectedMetas(); if(!metas.length){ alert('Chưa chọn PO nào.'); return; }
-  const wb=new ExcelJS.Workbook();
-  metas.forEach(m=>{ const nm=String(m.sheet).slice(0,31).replace(/[\\\/\?\*\[\]:]/g,'_'); buildPkl(wb.addWorksheet(nm),m); });
+  const gs=selectedGroups(); if(!gs.length){alert('Chưa chọn PO nào.');return;}
+  const wb=new ExcelJS.Workbook(); const used=new Set();
+  const dt=$('#invDate').value?fmtDate($('#invDate').value):''; const etd=$('#etd').value?fmtDate($('#etd').value):'';
+  gs.forEach((g,gi)=>{ g.markets.forEach(m=>{ m.invNo=invBase()+'-'+String(gi+1).padStart(2,'0'); m.invDate=dt; m.etd=etd; });
+    buildPklSheet(wb.addWorksheet(sheetName(g.po,used)), g); });
   await download(wb,'PKL '+invBase()+'.xlsx');
 }
+async function exportInv(){
+  const gs=selectedGroups(); if(!gs.length){alert('Chưa chọn PO nào.');return;}
+  const wb=new ExcelJS.Workbook(); const used=new Set();
+  const dt=$('#invDate').value?new Date($('#invDate').value):''; const etd=$('#etd').value?new Date($('#etd').value):'';
+  gs.forEach((g,gi)=>buildInvSheet(wb.addWorksheet(sheetName(g.po,used)), g, invBase()+'-'+String(gi+1).padStart(2,'0'), dt, etd));
+  await download(wb,'INV '+invBase()+'.xlsx');
+}
+const fmtDate=s=>{ const d=new Date(s); return d.getDate().toString().padStart(2,'0')+'/'+(d.getMonth()+1).toString().padStart(2,'0')+'/'+d.getFullYear(); };
 async function download(wb,fname){
   const buf=await wb.xlsx.writeBuffer();
   const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
-  $('#genStatus').textContent='Đã tạo: '+fname;
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000); $('#genStatus').textContent='Đã tạo: '+fname;
 }
 
 function renderTable(){
   const tb=$('#poTable tbody'); tb.innerHTML='';
-  PARSED.forEach((m,i)=>{
-    const t=m.tot; const arts=Object.keys(m.articles).map(k=>k.split('||')[0]).filter(Boolean).join(', ');
-    const color=m.rows[0]?.color||'';
+  GROUPS.forEach(g=>{
+    const pcs=g.markets.reduce((s,m)=>s+m.tot.qty,0);
+    const ctn=g.markets.reduce((s,m)=>s+m.tot.ctn,0);
+    const dcs=g.markets.map(m=>m.dcNumber||m.dest||'?').join(', ');
+    const arts=[...new Set(g.markets.map(m=>m.article).filter(Boolean))].join(', ');
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td><input type="checkbox" data-i="${i}" checked></td>
-      <td><b>${esc(m.sheet)}</b><div class="muted">PO ${esc(m.order)}</div></td>
-      <td>${esc(arts)}</td><td>${esc(color)}</td>
-      <td class="num">${t.qty.toLocaleString()}</td><td class="num">${Math.round(t.ctn)}</td>
-      <td class="num">${round(t.nw,1)}</td><td class="num">${round(t.gw,1)}</td><td class="num">${round(t.vol,2)}</td>
-      <td><span class="pill ok">Đọc được</span></td>`;
+    tr.innerHTML=`<td><input type="checkbox" data-po="${esc(g.po)}" checked></td>
+      <td><b>${esc(g.po)}</b></td>
+      <td>${esc(dcs)} ${g.markets.length>1?'<span class="pill multi">'+g.markets.length+' TT</span>':''}</td>
+      <td>${esc(arts)}</td>
+      <td class="num">${pcs.toLocaleString()}</td><td class="num">${Math.round(ctn)}</td>
+      <td><span class="pill ok">OK</span></td>`;
     tb.appendChild(tr);
   });
-  $('#poCount').textContent=PARSED.length+' PO đọc được';
   updateCount();
 }
-function updateCount(){
-  const n=document.querySelectorAll('#poTable tbody input:checked').length;
-  $('#poCount').textContent=n+'/'+PARSED.length+' PO được chọn';
-}
+function updateCount(){ const n=document.querySelectorAll('#poTable tbody input:checked').length;
+  $('#poCount').textContent=n+'/'+GROUPS.length+' PO được chọn'; }
 const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
 async function loadFile(file){
-  $('#status').innerHTML='⏳ Đang đọc file… (file lớn có thể mất 10–30 giây)';
-  $('#fname').textContent=file.name;
+  $('#status').innerHTML='⏳ Đang đọc file… (file lớn có thể mất 10–30 giây)'; $('#fname').textContent=file.name;
   try{
-    const buf=await file.arrayBuffer();
-    const wb=new ExcelJS.Workbook();
-    await wb.xlsx.load(buf);
+    const buf=await file.arrayBuffer(); const wb=new ExcelJS.Workbook(); await wb.xlsx.load(buf);
     PARSED=[]; let skipped=0;
-    wb.eachSheet(ws=>{ const m=parseSheet(ws); if(m) PARSED.push(m); else skipped++; });
-    if(!PARSED.length){ $('#status').innerHTML='<span style="color:#b45309">Không tìm thấy sheet PO chuẩn nào (cần bảng có cột Reference & Size).</span>'; return; }
-    $('#status').innerHTML=`<span style="color:#1e7d3a">✔ Đã đọc: <b>${PARSED.length}</b> PO chuẩn`+(skipped?` (bỏ qua ${skipped} sheet khác)`:'')+`.</span>`;
+    wb.eachSheet(ws=>{ const bs=parseBlocks(ws); if(bs.length)PARSED.push(...bs); else skipped++; });
+    GROUPS=groupByPo(PARSED);
+    if(!GROUPS.length){ $('#status').innerHTML='<span style="color:#b45309">Không tìm thấy sheet PO chuẩn nào.</span>'; return; }
+    $('#status').innerHTML=`<span style="color:#1e7d3a">✔ Đọc được <b>${PARSED.length}</b> thị trường → gộp thành <b>${GROUPS.length}</b> PO`+(skipped?` (bỏ qua ${skipped} sheet khác)`:'')+`.</span>`;
     $('#optCard').style.display='block'; $('#poCard').style.display='block'; $('#genCard').style.display='block';
     renderTable();
   }catch(e){ $('#status').innerHTML='<span style="color:#c0392b">Lỗi đọc file: '+esc(e.message)+'</span>'; console.error(e); }
 }
 
-// ---- events ----
 const drop=$('#drop'), fileInput=$('#file');
 drop.onclick=()=>fileInput.click();
 fileInput.onchange=e=>{ if(e.target.files[0]) loadFile(e.target.files[0]); };
 ['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hover');}));
 ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hover');}));
 drop.addEventListener('drop',e=>{ const f=e.dataTransfer.files[0]; if(f) loadFile(f); });
-$('#selAll').onclick=()=>{ document.querySelectorAll('#poTable tbody input').forEach(c=>c.checked=true); updateCount(); };
-$('#selNone').onclick=()=>{ document.querySelectorAll('#poTable tbody input').forEach(c=>c.checked=false); updateCount(); };
+$('#selAll').onclick=()=>{document.querySelectorAll('#poTable tbody input').forEach(c=>c.checked=true);updateCount();};
+$('#selNone').onclick=()=>{document.querySelectorAll('#poTable tbody input').forEach(c=>c.checked=false);updateCount();};
 $('#poTable').addEventListener('change',updateCount);
-$('#genInv').onclick=exportInv;
-$('#genPkl').onclick=exportPkl;
-$('#genBoth').onclick=async()=>{ await exportInv(); await exportPkl(); };
-// default date = today
+$('#genInv').onclick=exportInv; $('#genPkl').onclick=exportPkl;
+$('#genBoth').onclick=async()=>{await exportInv();await exportPkl();};
 $('#invDate').value=new Date().toISOString().slice(0,10);
 </script>
 </body>
