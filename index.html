@@ -223,16 +223,19 @@ const THIN={style:'thin'};
 const BORDER={top:THIN,left:THIN,bottom:THIN,right:THIN};
 const CEN={horizontal:'center',vertical:'middle',wrapText:true};
 const LEFTAL={horizontal:'left',vertical:'middle',wrapText:true};
-const HDRFILL={type:'pattern',pattern:'solid',fgColor:{argb:'FFD9E1F2'}};
+const HDRFILL=null;                                   // header khong to nen (giong file mau)
+const YEL={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFF00'}}; // vang cho dong prepack
+// Moi o deu dung font Arial (giong file mau), co chu mac dinh 10
 function S(ws,r,c,v,o){o=o||{};const cell=ws.getCell(r,c);cell.value=(v===undefined?null:v);
-  const f={}; if(o.b)f.bold=true; if(o.size)f.size=o.size; if(o.color)f.color={argb:o.color};
-  if(Object.keys(f).length)cell.font=f;
+  cell.font={name:'Arial', size:(o.size||10), bold:!!o.b, color:(o.color?{argb:o.color}:undefined)};
   if(o.al)cell.alignment=o.al; if(o.fill)cell.fill=o.fill; if(o.bd)cell.border=BORDER; return cell;}
 
 // ==== PKL: 1 block cho 1 thi truong, bat dau tai row top ====
 function pklBlock(ws, meta, top){
   const rr = n => top + (n - 2);           // template row n -> actual
-  S(ws,rr(2),13,"Packinglist",{b:1,size:12});
+  ws.mergeCells(rr(2),13,rr(2),17);        // gop M..Q cho tieu de hien day du
+  S(ws,rr(2),13,"Packinglist",{b:1,size:20,al:{horizontal:'center',vertical:'middle'}});
+  ws.getRow(rr(2)).height=28;
   S(ws,rr(4),1,"Shipper/Exporter",{b:1}); S(ws,rr(4),13,"No. and date of invoice",{b:1});
   S(ws,rr(5),1,"Supplier Name"); S(ws,rr(5),2,SUP.name); S(ws,rr(5),13,"Invoice No.:"); S(ws,rr(5),17,meta.invNo||"");
   S(ws,rr(6),1,"Supplier adress"); S(ws,rr(6),2,SUP.addr); S(ws,rr(6),13,"Date:"); S(ws,rr(6),17,meta.invDate||"");
@@ -250,13 +253,24 @@ function pklBlock(ws, meta, top){
   S(ws,rr(23),1,"By Sea"); S(ws,rr(23),4,meta.etd||"");
   S(ws,rr(26),1,"HKM Order No.:",{b:1}); S(ws,rr(26),2,meta.order);
   S(ws,rr(27),1,"DC Number:",{b:1}); S(ws,rr(27),2,meta.dcNumber);
+  // Ke khung header giong file mau (hop ngoai + vach chia)
+  const setB=(r,c,sides)=>{ const cell=ws.getCell(r,c); const cur=cell.border||{};
+    const nb={left:cur.left,right:cur.right,top:cur.top,bottom:cur.bottom};
+    for(const s of sides){ if(s==='L')nb.left=THIN; if(s==='R')nb.right=THIN; if(s==='T')nb.top=THIN; if(s==='B')nb.bottom=THIN; }
+    cell.border=nb; if(!cell.font)cell.font={name:'Arial',size:10}; };
+  const RE=20; // canh phai khung
+  for(let r=rr(4);r<=rr(23);r++){ setB(r,1,'L'); setB(r,12,'R'); setB(r,13,'L'); setB(r,RE,'R'); }
+  for(let r=rr(20);r<=rr(23);r++) setB(r,4,'L');            // vach doc trong muc Port
+  for(let c=1;c<=RE;c++){ setB(rr(4),c,'T'); setB(rr(23),c,'B'); } // top & bottom khung
+  [9,14,19,21].forEach(rn=>{ for(let c=1;c<=12;c++) setB(rr(rn),c,'B'); }); // vach chia khoi trai
+  for(let c=13;c<=RE;c++) setB(rr(9),c,'B');                // vach chia khoi phai (invoice / remarks)
   // Prepack summary (lien mach, khong cot trong)
   const ph=rr(29);
   ["CTN NO.","Article Description","HKM Prepack No.","Colour","QTY in CTN","Total/Pacl"]
     .forEach((t,i)=>S(ws,ph,i+1,t,{b:1,bd:1,al:CEN,fill:HDRFILL}));
-  S(ws,ph+1,1,meta.cartonRange,{bd:1,al:CEN}); S(ws,ph+1,2,meta.desc,{bd:1,al:LEFTAL});
-  S(ws,ph+1,3,"",{bd:1}); S(ws,ph+1,4,meta.colour,{bd:1,al:LEFTAL});
-  S(ws,ph+1,5,meta.cartonRange,{bd:1,al:CEN}); S(ws,ph+1,6,meta.cartons,{bd:1,al:CEN});
+  S(ws,ph+1,1,meta.cartonRange,{bd:1,al:CEN,fill:YEL}); S(ws,ph+1,2,meta.desc,{bd:1,al:LEFTAL,fill:YEL});
+  S(ws,ph+1,3,"",{bd:1,fill:YEL}); S(ws,ph+1,4,meta.colour,{bd:1,al:LEFTAL,fill:YEL});
+  S(ws,ph+1,5,meta.cartonRange,{bd:1,al:CEN,fill:YEL}); S(ws,ph+1,6,meta.cartons,{bd:1,al:CEN,fill:YEL});
   S(ws,rr(33),1,"Contents Prepack:",{b:1});
   // Bang chi tiet ma tran — LIEN MACH, moi dong chi tiet = 1 cot size, ke vien toan bo
   const mh=rr(38); const szc0=4; const nS=meta.rows.length; const lastSize=szc0+nS-1; const rc=lastSize+1;
@@ -271,7 +285,8 @@ function pklBlock(ws, meta, top){
     S(ws,r,1,(cf!==''?(cf+'-'+ct):''),{bd:1,al:CEN});
     S(ws,r,2,(i===0?meta.order:''),{bd:1,al:CEN});
     S(ws,r,3,(i===0?meta.colour:''),{bd:1,al:LEFTAL});
-    for(let c=szc0;c<=lastSize;c++) S(ws,r,c,(c===szc0+i?x.real:null),{bd:1,al:CEN});
+    for(let c=szc0;c<=lastSize;c++){ const isv=(c===szc0+i);
+      S(ws,r,c,(isv?x.real:null), isv?{bd:1,al:CEN,size:12,b:1}:{bd:1,al:CEN}); }
     S(ws,r,rc,(x.boxes||0)+' * '+(x.qtyctn||0),{bd:1,al:CEN});
     S(ws,r,rc+1,"=",{bd:1,al:CEN});
     S(ws,r,rc+2,x.real,{bd:1,al:CEN});
@@ -301,7 +316,7 @@ function pklBlock(ws, meta, top){
 }
 
 function buildPklSheet(ws, group){
-  ws.columns=[{width:11},{width:20},{width:16}].concat(Array.from({length:230},()=>({width:8})));
+  ws.columns=[{width:17},{width:22},{width:15}].concat(Array.from({length:230},()=>({width:7})));
   let top=2;
   group.markets.forEach(m=>{ top=pklBlock(ws,m,top); });
 }
