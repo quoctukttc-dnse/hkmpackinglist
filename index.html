@@ -208,7 +208,7 @@ function deliveryPOs(wb){
   wb.eachSheet(ws=>{
     if(set||!/delivery/i.test(ws.name)) return;
     let oc=null,hr=null;
-    for(let r=1;r<=12&&!oc;r++){ for(let c=1;c<=40;c++){ const v=cellVal(ws.getCell(r,c));
+    for(let r=1;r<=30&&!oc;r++){ for(let c=1;c<=40;c++){ const v=cellVal(ws.getCell(r,c));
       if(typeof v==='string'&&v.trim().toLowerCase()==='order'){oc=c;hr=r;break;} } }
     if(!oc) return;
     set=new Set();
