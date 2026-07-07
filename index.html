@@ -35,6 +35,8 @@
   .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
   .pill.ok{background:#e6f4ea;color:var(--ok)}
   .pill.multi{background:#e7effb;color:var(--blue2)}
+  .pill.warn{background:#fdecea;color:#c0392b}
+  #warnBox{display:none;background:#fff7ed;border:1px solid #f0c088;color:#8a4b0a;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:13px}
   .muted{color:#8592a6;font-size:12px}
   .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
   .note{font-size:12px;color:#8592a6;margin-top:10px}
@@ -73,6 +75,7 @@
       <button class="btn sec" id="selNone">Bỏ chọn</button>
       <span class="muted" id="poCount"></span>
     </div>
+    <div id="warnBox"></div>
     <div class="scroll">
       <table id="poTable">
         <thead><tr><th style="width:36px"></th><th>PO</th><th>Thị trường (DC)</th><th>Mã hàng</th>
@@ -139,12 +142,31 @@ function parseBlocks(ws){
   return out;
 }
 function parseOneBlock(ws,hdr,endR,blockNo){
-  let colmap={};
-  for(let c=1;c<=16;c++){ const v=cellVal(ws.getCell(hdr,c)); if(v)colmap[String(v).trim().toLowerCase().replace(/\n/g,' ')]=c; }
-  const col=(...names)=>{ for(const n of names){ for(const k in colmap){ if(k.includes(n))return colmap[k]; } } return null; };
-  const C={from:col('ctn from','from')||1,to:col('ctn to')||2,ref:col('reference')||3,color:col('color','colour')||4,
-    size:col('size')||5,qty:col('qty')||6,box:col('number of box','box')||7,real:col('real qty')||8,
-    vol:col('vol')||9,nw:col('nw','n.w')||10,gw:col('wg','g.w','gw')||11,csize:col('carton size')||12};
+  // Do cot linh hoat: chuan hoa nhan (bo dau cach/ky tu), gan theo do uu tien, tranh trung cot
+  const Hh={};
+  for(let c=1;c<=28;c++){ const v=cellVal(ws.getCell(hdr,c));
+    if(v!=null&&v!==''){ const k=String(v).toLowerCase().replace(/[\s\n._()\/]/g,''); if(!(k in Hh)) Hh[k]=c; } }
+  const usedC=new Set();
+  const pick=(...preds)=>{ for(const pred of preds){ for(const k in Hh){ if(usedC.has(Hh[k]))continue; if(pred(k)){ usedC.add(Hh[k]); return Hh[k]; } } } return null; };
+  const has=s=>k=>k.includes(s), eq=s=>k=>k===s, sw=s=>k=>k.startsWith(s);
+  const C={};
+  C.real = pick(has('realquantity'),has('realqty'),sw('realq'));
+  C.box  = pick(has('totalbox'),has('numberofbox'),has('box'));
+  C.csize= pick(has('cartonsize'),k=>k.includes('carton')&&k.includes('size'));
+  C.nw   = pick(has('nweight'),has('netweight'),has('nwkg'),eq('nw'),has('nw'));
+  C.gw   = pick(has('gweight'),has('grossweight'),has('weight'),has('wgkg'),has('wg'),eq('gw'));
+  C.vol  = pick(has('volume'),has('vol'));
+  C.size = pick(eq('size'),has('size'));
+  C.qty  = pick(eq('qty'),has('quantity'),has('qty'));
+  C.ref  = pick(has('reference'),eq('ref'),has('ref'));
+  C.color= pick(has('colour'),has('color'));
+  C.from = pick(has('ctnfrom'),eq('from'),has('from'));
+  C.to   = pick(has('ctnto'),eq('to'));
+  C.dc   = pick(eq('dc'));                       // form Bien Hoa: DC/Warehouse/Destination theo cot
+  C.wh   = pick(eq('warehouse'),has('warehouse'));
+  C.dest = pick(eq('destination'),has('destination'));
+  C.from=C.from||1; C.to=C.to||2; C.ref=C.ref||3; C.color=C.color||4; C.size=C.size||5;
+  C.qty=C.qty||6; C.box=C.box||7; C.real=C.real||8; C.vol=C.vol||9; C.nw=C.nw||10; C.gw=C.gw||11; C.csize=C.csize||12;
   const meta={order:null,customer:null,dc:null,dest:null,warehouse:null};
   for(let r=Math.max(1,hdr-6);r<hdr;r++){ for(let c=1;c<=14;c++){
     const v=cellVal(ws.getCell(r,c)); if(typeof v!=='string') continue;
@@ -156,6 +178,7 @@ function parseOneBlock(ws,hdr,endR,blockNo){
   if(!meta.order) meta.order=ws.name.trim();
   const rows=[]; const gtot={ctn:0,qty:0,vol:0,nw:0,gw:0}; const dtot={ctn:0,qty:0,vol:0,nw:0,gw:0}; let nsub=0;
   let lastRef=null,lastColor=null; const last=endR;
+  let fDC=null,fWH=null,fDest=null;   // gia tri DC/Warehouse/Destination lay tu dong du lieu (form Bien Hoa)
   for(let r=hdr+1;r<=last;r++){
     const rv=cellVal(ws.getCell(r,C.ref)); if(rv!==null&&rv!=='') lastRef=rv;
     const cv=cellVal(ws.getCell(r,C.color)); if(cv!==null&&cv!=='') lastColor=cv;
@@ -171,6 +194,9 @@ function parseOneBlock(ws,hdr,endR,blockNo){
       continue;
     }
     if(real<=0) continue;
+    if(C.dc&&fDC==null){const v=cellVal(ws.getCell(r,C.dc)); if(v!=null&&v!=='')fDC=v;}
+    if(C.wh&&fWH==null){const v=cellVal(ws.getCell(r,C.wh)); if(v!=null&&v!=='')fWH=v;}
+    if(C.dest&&fDest==null){const v=cellVal(ws.getCell(r,C.dest)); if(v!=null&&v!=='')fDest=v;}
     const [art,desc]=articleOf(lastRef);
     rows.push({cfrom:cellVal(ws.getCell(r,C.from)),cto:cellVal(ws.getCell(r,C.to)),ref:lastRef,art,desc,
       color:lastColor,size:size.trim().toUpperCase(),qtyctn:num(cellVal(ws.getCell(r,C.qty))),
@@ -187,8 +213,17 @@ function parseOneBlock(ws,hdr,endR,blockNo){
   meta.po=poOf(meta.order, ws.name);
   meta.article=art0; meta.desc=desc0 || (meta.customer?String(meta.customer).toUpperCase():'');
   meta.colour=rows.length?rows[0].color:'';
+  // Form Bien Hoa: DC/Warehouse/Destination nam trong cot du lieu -> lay tu dong dau
+  if(meta.dc==null||meta.dc==='') meta.dc=fDC;
+  if(meta.warehouse==null||meta.warehouse==='') meta.warehouse=fWH;
+  if(meta.dest==null||meta.dest==='') meta.dest=fDest;
   meta.dcNumber=[meta.dc,meta.warehouse,meta.dest].filter(x=>x!=null&&x!=='').join('/');
   meta.dc4=(String(meta.dc==null?'':meta.dc).match(/\d{3,4}/)||[])[0] || (String(meta.dcNumber).match(/\d{3,4}/)||[''])[0];
+  // Canh bao thieu thong tin thi truong (quen dien DC/Destination)
+  const dcEmpty=!(meta.dc!=null&&String(meta.dc).trim()!=='');
+  const destEmpty=!(meta.dest!=null&&String(meta.dest).trim()!=='');
+  meta.missingDC=dcEmpty||destEmpty;
+  meta.missingWhat=[dcEmpty?'DC':null,destEmpty?'Destination':null].filter(Boolean).join(' & ');
   meta.refText=rows.length?String(rows[0].ref==null?'':rows[0].ref):(meta.desc||'');
   meta.cartons=Math.round(tot.ctn);
   meta.cartonRange = meta.cartons>0 ? ('1-'+meta.cartons) : '';
@@ -209,7 +244,8 @@ function deliveryPOs(wb){
     if(set||!/delivery/i.test(ws.name)) return;
     let oc=null,hr=null;
     for(let r=1;r<=30&&!oc;r++){ for(let c=1;c<=40;c++){ const v=cellVal(ws.getCell(r,c));
-      if(typeof v==='string'&&v.trim().toLowerCase()==='order'){oc=c;hr=r;break;} } }
+      if(typeof v==='string'){ const k=v.trim().toLowerCase().replace(/[\s._]/g,'');
+        if(k==='order'||k==='pono'||k==='ponumber'||k==='oderno'||k==='orderno'||k.includes('pono')||k.includes('orderno')||k.includes('oderno')){oc=c;hr=r;break;} } } }
     if(!oc) return;
     set=new Set();
     for(let r=hr+1;r<=ws.rowCount;r++){ const v=cellVal(ws.getCell(r,oc)); if(v==null||v==='')continue;
@@ -225,10 +261,13 @@ const CEN={horizontal:'center',vertical:'middle',wrapText:true};
 const LEFTAL={horizontal:'left',vertical:'middle',wrapText:true};
 const HDRFILL=null;                                   // header khong to nen (giong file mau)
 const YEL={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFF00'}}; // vang cho dong prepack
+const RED={type:'pattern',pattern:'solid',fgColor:{argb:'FFFF0000'}}; // do cho gia tri am
 // Moi o deu dung font Arial (giong file mau), co chu mac dinh 10
 function S(ws,r,c,v,o){o=o||{};const cell=ws.getCell(r,c);cell.value=(v===undefined?null:v);
   cell.font={name:'Arial', size:(o.size||10), bold:!!o.b, color:(o.color?{argb:o.color}:undefined)};
-  if(o.al)cell.alignment=o.al; if(o.fill)cell.fill=o.fill; if(o.bd)cell.border=BORDER; return cell;}
+  if(o.al)cell.alignment=o.al; if(o.fill)cell.fill=o.fill; if(o.bd)cell.border=BORDER;
+  if(typeof v==='number' && v<0) cell.fill=RED;   // gia tri am -> to do de chu y
+  return cell;}
 
 // ==== PKL: 1 block cho 1 thi truong, bat dau tai row top ====
 function pklBlock(ws, meta, top){
@@ -252,13 +291,15 @@ function pklBlock(ws, meta, top){
   S(ws,rr(22),1,"Carrier",{b:1}); S(ws,rr(22),4,"Sailing on or about",{b:1});
   S(ws,rr(23),1,"By Sea"); S(ws,rr(23),4,meta.etd||"");
   S(ws,rr(26),1,"HKM Order No.:",{b:1}); S(ws,rr(26),2,meta.order);
-  S(ws,rr(27),1,"DC Number:",{b:1}); S(ws,rr(27),2,meta.dcNumber);
+  S(ws,rr(27),1,"DC Number:",{b:1});
+  if(meta.dcNumber){ S(ws,rr(27),2,meta.dcNumber); }
+  else { S(ws,rr(27),2,"⚠ THIẾU DC/THỊ TRƯỜNG - VUI LÒNG BỔ SUNG",{b:1,fill:RED,color:'FFFFFFFF'}); }
   // Ke khung header giong file mau (hop ngoai + vach chia)
   const setB=(r,c,sides)=>{ const cell=ws.getCell(r,c); const cur=cell.border||{};
     const nb={left:cur.left,right:cur.right,top:cur.top,bottom:cur.bottom};
     for(const s of sides){ if(s==='L')nb.left=THIN; if(s==='R')nb.right=THIN; if(s==='T')nb.top=THIN; if(s==='B')nb.bottom=THIN; }
     cell.border=nb; if(!cell.font)cell.font={name:'Arial',size:10}; };
-  const RE=20; // canh phai khung
+  const RE=17; // canh phai khung = het vung du lieu invoice (cot Q), khong thua ra
   for(let r=rr(4);r<=rr(23);r++){ setB(r,1,'L'); setB(r,12,'R'); setB(r,13,'L'); setB(r,RE,'R'); }
   for(let r=rr(20);r<=rr(23);r++) setB(r,4,'L');            // vach doc trong muc Port
   for(let c=1;c<=RE;c++){ setB(rr(4),c,'T'); setB(rr(23),c,'B'); } // top & bottom khung
@@ -395,20 +436,31 @@ async function download(wb,fname){
 
 function renderTable(){
   const tb=$('#poTable tbody'); tb.innerHTML='';
+  let warnCount=0;
   GROUPS.forEach(g=>{
     const pcs=g.markets.reduce((s,m)=>s+m.tot.qty,0);
     const ctn=g.markets.reduce((s,m)=>s+m.tot.ctn,0);
-    const dcs=g.markets.map(m=>m.dcNumber||m.dest||'?').join(', ');
+    const dcs=[...new Set(g.markets.map(m=>m.dcNumber||m.dest||'').filter(Boolean))].join(', ');
     const arts=[...new Set(g.markets.map(m=>m.article).filter(Boolean))].join(', ');
+    const miss=g.markets.some(m=>m.missingDC);
+    if(miss)warnCount++;
+    const status = miss
+      ? `<span class="pill warn">⚠ Thiếu DC/Thị trường</span>`
+      : `<span class="pill ok">OK</span>`;
     const tr=document.createElement('tr');
+    if(miss) tr.style.background='#fff7ed';
     tr.innerHTML=`<td><input type="checkbox" data-po="${esc(g.po)}" checked></td>
       <td><b>${esc(g.po)}</b></td>
-      <td>${esc(dcs)} ${g.markets.length>1?'<span class="pill multi">'+g.markets.length+' TT</span>':''}</td>
+      <td>${esc(dcs)||'<span style="color:#c0392b">—</span>'} ${g.markets.length>1?'<span class="pill multi">'+g.markets.length+' TT</span>':''}</td>
       <td>${esc(arts)}</td>
       <td class="num">${pcs.toLocaleString()}</td><td class="num">${Math.round(ctn)}</td>
-      <td><span class="pill ok">OK</span></td>`;
+      <td>${status}</td>`;
     tb.appendChild(tr);
   });
+  const warnBox=$('#warnBox');
+  if(warnCount){ warnBox.style.display='block';
+    warnBox.innerHTML=`⚠ <b>${warnCount} PO thiếu DC/Thị trường</b> (có thể quên điền cột DC/Destination). Các PO này được tô vàng ở bảng và ô "DC Number" trong file sẽ hiện cảnh báo đỏ.`; }
+  else warnBox.style.display='none';
   updateCount();
 }
 function updateCount(){ const n=document.querySelectorAll('#poTable tbody input:checked').length;
@@ -423,8 +475,9 @@ async function loadFile(file){
     wb.eachSheet(ws=>{ const bs=parseBlocks(ws); if(bs.length)PARSED.push(...bs); else skipped++; });
     GROUPS=groupByPo(PARSED);
     const dl=deliveryPOs(wb); let dlNote='';
-    if(dl && dl.size){ const before=GROUPS.length; GROUPS=GROUPS.filter(g=>dl.has(g.po));
-      dlNote=` · lọc theo Delivery List: giữ <b>${GROUPS.length}</b>/${before} PO`; }
+    if(dl && dl.size){ const before=GROUPS.length; const filtered=GROUPS.filter(g=>dl.has(g.po));
+      if(filtered.length){ GROUPS=filtered; dlNote=` · lọc theo Delivery List: giữ <b>${GROUPS.length}</b>/${before} PO`; }
+      else dlNote=' · (Delivery List không khớp PO nào → hiện tất cả PO)'; }
     else dlNote=' · (không thấy sheet Delivery List → hiện tất cả PO)';
     if(!GROUPS.length){ $('#status').innerHTML='<span style="color:#b45309">Không có PO nào khớp Delivery List.</span>'; return; }
     $('#status').innerHTML=`<span style="color:#1e7d3a">✔ Đọc được <b>${PARSED.length}</b> thị trường → <b>${GROUPS.length}</b> PO`+dlNote+(skipped?` (bỏ qua ${skipped} sheet)`:'')+`.</span>`;
