@@ -100,7 +100,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const SIZE_RE = /^(XXS|XS|S|M|L|XL|XXL|XXXL)$|^[A-Z]{1,3}\d{2,3}$/;
+const SIZE_RE = /^(XXS|XS|S|M|L|XL|XXL|XXXL|[2-9]XS|[2-9]XL|[2-9]XXL)$|^[A-Z]{1,3}\d{2,3}$/;
 let PARSED = [];   // moi phan tu = 1 sheet nguon (1 thi truong)
 let GROUPS = [];   // gom theo so PO: {po, markets:[meta,...]}
 
@@ -335,7 +335,21 @@ function pklBlock(ws, meta, top){
     S(ws,r,rc+4,round(x.nw,2),{bd:1,al:CEN});
     S(ws,r,rc+5,x.csize,{bd:1,al:CEN});
   });
-  let r = d0 + nS;
+  // === Colour and size breakdown: sum theo tung size (nam GIUA chi tiet va TOTAL) ===
+  let r = d0 + nS + 1;
+  const dist=[]; const sumBy={};
+  meta.rows.forEach(x=>{ if(!(x.size in sumBy)){dist.push(x.size);sumBy[x.size]=0;} sumBy[x.size]+=x.real; });
+  S(ws,r,1,"Colour and size breakdown:",{b:1}); r++;
+  const bh=r;
+  S(ws,bh,1,"CTN NO.",{b:1,bd:1,al:CEN,fill:HDRFILL});
+  S(ws,bh,2,"EAN Code",{b:1,bd:1,al:CEN,fill:HDRFILL});
+  S(ws,bh,3,"Colour",{b:1,bd:1,al:CEN,fill:HDRFILL});
+  dist.forEach((s,i)=>S(ws,bh,4+i,s,{b:1,bd:1,al:CEN,fill:HDRFILL}));
+  S(ws,bh+1,1,meta.cartonRange,{bd:1,al:CEN});
+  S(ws,bh+1,2,meta.article||meta.order,{bd:1,al:CEN});
+  S(ws,bh+1,3,meta.colour,{bd:1,al:LEFTAL});
+  dist.forEach((s,i)=>S(ws,bh+1,4+i,sumBy[s],{bd:1,al:CEN,b:1,size:12}));
+  r = bh + 3;
   const csizes=[...new Set(meta.rows.map(x=>x.csize).filter(Boolean))].join('; ');
   // Dong TOTAL lien mach (vien het cac cot)
   S(ws,r,1,"TOTAL",{b:1,bd:1,al:CEN});
