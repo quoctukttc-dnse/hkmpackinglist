@@ -100,7 +100,8 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const SIZE_RE = /^(XXS|XS|S|M|L|XL|XXL|XXXL|[2-9]XS|[2-9]XL|[2-9]XXL)$|^[A-Z]{1,3}\d{2,3}$/;
+const _SZPART='(?:XXS|XS|S|M|L|XL|XXL|XXXL|[2-9]XS|[2-9]XL|[2-9]XXL|[A-Z]{1,3}\\d{2,3})';
+const SIZE_RE = new RegExp('^'+_SZPART+'(\\/'+_SZPART+')?$');  // nhan ca size ghep: XS/S, M/L, XL/2XL
 let PARSED = [];   // moi phan tu = 1 sheet nguon (1 thi truong)
 let GROUPS = [];   // gom theo so PO: {po, markets:[meta,...]}
 
@@ -179,6 +180,7 @@ function parseOneBlock(ws,hdr,endR,blockNo){
   const rows=[]; const gtot={ctn:0,qty:0,vol:0,nw:0,gw:0}; const dtot={ctn:0,qty:0,vol:0,nw:0,gw:0}; let nsub=0;
   let lastRef=null,lastColor=null; const last=endR;
   let fDC=null,fWH=null,fDest=null;   // gia tri DC/Warehouse/Destination lay tu dong du lieu (form Bien Hoa)
+  let maxCTN=0;                        // so kien = so thung lon nhat (thung danh so 1..N) — chuan cho ca hang prepack
   for(let r=hdr+1;r<=last;r++){
     const rv=cellVal(ws.getCell(r,C.ref)); if(rv!==null&&rv!=='') lastRef=rv;
     const cv=cellVal(ws.getCell(r,C.color)); if(cv!==null&&cv!=='') lastColor=cv;
@@ -198,6 +200,8 @@ function parseOneBlock(ws,hdr,endR,blockNo){
     if(C.wh&&fWH==null){const v=cellVal(ws.getCell(r,C.wh)); if(v!=null&&v!=='')fWH=v;}
     if(C.dest&&fDest==null){const v=cellVal(ws.getCell(r,C.dest)); if(v!=null&&v!=='')fDest=v;}
     const [art,desc]=articleOf(lastRef);
+    const _cf=num(cellVal(ws.getCell(r,C.from))), _ct=num(cellVal(ws.getCell(r,C.to)));
+    if(_cf>maxCTN)maxCTN=_cf; if(_ct>maxCTN)maxCTN=_ct;
     rows.push({cfrom:cellVal(ws.getCell(r,C.from)),cto:cellVal(ws.getCell(r,C.to)),ref:lastRef,art,desc,
       color:lastColor,size:size.trim().toUpperCase(),qtyctn:num(cellVal(ws.getCell(r,C.qty))),
       boxes:box,real,vol,nw,gw,csize:cellVal(ws.getCell(r,C.csize))});
@@ -205,6 +209,7 @@ function parseOneBlock(ws,hdr,endR,blockNo){
   }
   if(!rows.length && nsub===0) return null;
   const tot=(nsub>0)?gtot:dtot;
+  if(maxCTN>0) tot.ctn=maxCTN;   // so kien theo dai carton (tranh cong lech o hang prepack)
   // thong tin tong hop cho header/prepack
   const firstRef = rows.length?rows[0].ref:(lastRef||'');
   const [art0,desc0]=articleOf(firstRef);
