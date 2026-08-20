@@ -47,7 +47,7 @@
 <header>
   <h1>Chuyển Gút hàng → Invoice + Packing List</h1>
   <p>Upload file gút hàng (.xlsx) → chọn PO → tải về INV + PKL. Mỗi PO gộp vào 1 sheet (nhiều thị trường xếp chồng). Giá để trống điền sau.</p>
-  <p style="font-size:11px;opacity:.8;margin-top:4px">Phiên bản 2026-07-27 · Lọc theo Delivery List ✓ · Hỗ trợ form Huế &amp; Biên Hòa</p>
+  <p style="font-size:11px;opacity:.8;margin-top:4px">Phiên bản 2026-08-20 · Lọc theo Delivery List ✓ · Hỗ trợ form Huế, Biên Hòa, SB HCM, Thiên Kim</p>
 </header>
 <div class="wrap">
 
@@ -152,7 +152,7 @@ function parseOneBlock(ws,hdr,endR,blockNo){
   const pick=(...preds)=>{ for(const pred of preds){ for(const k in Hh){ if(usedC.has(Hh[k]))continue; if(pred(k)){ usedC.add(Hh[k]); return Hh[k]; } } } return null; };
   const has=s=>k=>k.includes(s), eq=s=>k=>k===s, sw=s=>k=>k.startsWith(s);
   const C={};
-  C.real = pick(has('realquantity'),has('realqty'),sw('realq'));
+  C.real = pick(has('realquantity'),has('realqty'),sw('realq'),eq('total'),has('total'));
   C.box  = pick(has('totalbox'),has('numberofbox'),has('box'));
   C.csize= pick(has('cartonsize'),k=>k.includes('carton')&&k.includes('size'));
   C.nw   = pick(has('nweight'),has('netweight'),has('nwkg'),eq('nw'),has('nw'));
@@ -203,8 +203,10 @@ function parseOneBlock(ws,hdr,endR,blockNo){
     const [art,desc]=articleOf(lastRef);
     const _cf=num(cellVal(ws.getCell(r,C.from))), _ct=num(cellVal(ws.getCell(r,C.to)));
     if(_cf>maxCTN)maxCTN=_cf; if(_ct>maxCTN)maxCTN=_ct;
+    let _qtyc=num(cellVal(ws.getCell(r,C.qty)));
+    if(_qtyc<=0 && box>0) _qtyc=Math.round(real/box);   // form khong co cot Qty/ctn -> suy ra tu real/box
     rows.push({cfrom:cellVal(ws.getCell(r,C.from)),cto:cellVal(ws.getCell(r,C.to)),ref:lastRef,art,desc,
-      color:lastColor,size:size.trim().toUpperCase(),qtyctn:num(cellVal(ws.getCell(r,C.qty))),
+      color:lastColor,size:size.trim().toUpperCase(),qtyctn:_qtyc,
       boxes:box,real,vol,nw,gw,csize:cellVal(ws.getCell(r,C.csize))});
     dtot.ctn+=box; dtot.qty+=real; dtot.vol+=vol; dtot.nw+=nw; dtot.gw+=gw;
   }
