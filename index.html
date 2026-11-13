@@ -47,7 +47,7 @@
 <header>
   <h1>Chuyển Gút hàng → Invoice + Packing List</h1>
   <p>Upload file gút hàng (.xlsx) → chọn PO → tải về INV + PKL. Mỗi PO gộp vào 1 sheet (nhiều thị trường xếp chồng). Giá để trống điền sau.</p>
-  <p style="font-size:11px;opacity:.8;margin-top:4px">Phiên bản 2026-08-20 · Lọc theo Delivery List ✓ · Hỗ trợ form Huế, Biên Hòa, SB HCM, Thiên Kim</p>
+  <p style="font-size:11px;opacity:.8;margin-top:4px">Phiên bản 2026-11-13 · Lọc theo Delivery List ✓ · Hỗ trợ form Huế, Biên Hòa, SB HCM, Thiên Kim (cả bản không có cột dải carton)</p>
 </header>
 <div class="wrap">
 
@@ -162,8 +162,9 @@ function parseOneBlock(ws,hdr,endR,blockNo){
   C.qty  = pick(eq('qty'),has('quantity'),has('totpiece'),has('piece'),has('qty'));
   C.ref  = pick(has('reference'),eq('ref'),has('ref'));
   C.color= pick(has('colour'),has('color'));
-  C.from = pick(has('ctnfrom'),eq('from'),has('from'));
-  C.to   = pick(has('ctnto'),eq('to'));
+  C.from = pick(has('ctnfrom'),eq('from'),eq('no'),has('from'));
+  C.to   = pick(has('ctnto'),eq('to'),eq('nomoi'),has('nomoi'));
+  const hasRange = !!(C.from && C.to);   // co cot dai carton (CTN From/To hoac NO/NO MOI) hay khong
   C.dc   = pick(eq('dc'));                       // form Bien Hoa: DC/Warehouse/Destination theo cot
   C.wh   = pick(eq('warehouse'),has('warehouse'));
   C.dest = pick(eq('destination'),has('destination'),eq('flow'),has('flow'));
@@ -182,6 +183,7 @@ function parseOneBlock(ws,hdr,endR,blockNo){
   let lastRef=null,lastColor=null; const last=endR;
   let fDC=null,fWH=null,fDest=null;   // gia tri DC/Warehouse/Destination lay tu dong du lieu (form Bien Hoa)
   let maxCTN=0;                        // so kien = so thung lon nhat (thung danh so 1..N) — chuan cho ca hang prepack
+  let ctnCounter=0;                    // dem dai carton tu NumOfBox khi form khong co cot dai carton
   for(let r=hdr+1;r<=last;r++){
     const rv=cellVal(ws.getCell(r,C.ref)); if(rv!==null&&rv!=='') lastRef=rv;
     const cv=cellVal(ws.getCell(r,C.color)); if(cv!==null&&cv!=='') lastColor=cv;
@@ -201,11 +203,14 @@ function parseOneBlock(ws,hdr,endR,blockNo){
     if(C.wh&&fWH==null){const v=cellVal(ws.getCell(r,C.wh)); if(v!=null&&v!=='')fWH=v;}
     if(C.dest&&fDest==null){const v=cellVal(ws.getCell(r,C.dest)); if(v!=null&&v!=='')fDest=v;}
     const [art,desc]=articleOf(lastRef);
-    const _cf=num(cellVal(ws.getCell(r,C.from))), _ct=num(cellVal(ws.getCell(r,C.to)));
+    let cfVal, ctVal;
+    if(hasRange){ cfVal=cellVal(ws.getCell(r,C.from)); ctVal=cellVal(ws.getCell(r,C.to)); }
+    else { const nb=box>0?box:1; cfVal=ctnCounter+1; ctVal=ctnCounter+nb; ctnCounter=ctVal; } // tu dung dai carton tu NumOfBox
+    const _cf=num(cfVal), _ct=num(ctVal);
     if(_cf>maxCTN)maxCTN=_cf; if(_ct>maxCTN)maxCTN=_ct;
     let _qtyc=num(cellVal(ws.getCell(r,C.qty)));
     if(_qtyc<=0 && box>0) _qtyc=Math.round(real/box);   // form khong co cot Qty/ctn -> suy ra tu real/box
-    rows.push({cfrom:cellVal(ws.getCell(r,C.from)),cto:cellVal(ws.getCell(r,C.to)),ref:lastRef,art,desc,
+    rows.push({cfrom:cfVal,cto:ctVal,ref:lastRef,art,desc,
       color:lastColor,size:size.trim().toUpperCase(),qtyctn:_qtyc,
       boxes:box,real,vol,nw,gw,csize:cellVal(ws.getCell(r,C.csize))});
     dtot.ctn+=box; dtot.qty+=real; dtot.vol+=vol; dtot.nw+=nw; dtot.gw+=gw;
